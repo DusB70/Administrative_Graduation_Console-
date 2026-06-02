@@ -9,6 +9,9 @@ BEGIN
 END
 $$;
 
+-- Grant app_user role to postgres to allow role switching (required on cloud hosts like Supabase)
+GRANT app_user TO postgres;
+
 -- Drop existing tables if they exist to start fresh
 DROP TABLE IF EXISTS audit_logs CASCADE;
 DROP TABLE IF EXISTS otp_codes CASCADE;

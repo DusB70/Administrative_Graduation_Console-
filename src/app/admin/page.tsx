@@ -313,6 +313,15 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleClearStaging = () => {
+    setStagingResults([]);
+    setIngestFile(null);
+    setIsValidBatch(false);
+    setShowStagingModal(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    triggerAlert(true, 'Staging data validation grid cleared.');
+  };
+
   // 3. SET TIMELINE WINDOW
   const handleSaveTimeline = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -477,6 +486,15 @@ export default function AdminDashboard() {
                 Close Preview
               </Button>
             )}
+            <Button
+              variant="outline"
+              onClick={handleClearStaging}
+              disabled={loading}
+              className="border-red-200 dark:border-red-950/40 hover:bg-red-50 dark:hover:bg-red-950/10 text-red-650 dark:text-red-400 rounded-xl text-xs font-bold h-9 px-4 flex items-center gap-1.5"
+            >
+              <Trash2 className="h-4 w-4" />
+              Clear Staging
+            </Button>
             <Button
               onClick={handleCommitIngest}
               disabled={loading || !isValidBatch}
