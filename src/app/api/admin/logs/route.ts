@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { runAsAdmin } from '@/lib/db';
+import { getAdminSession } from '@/lib/auth';
 
 export async function GET() {
   try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     const data = await runAsAdmin(async (client) => {
       const res = await client.query(`
         SELECT l.*, s.index_no, s.registration_no, s.email, s.name_with_initials
@@ -17,3 +23,4 @@ export async function GET() {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
 }
+

@@ -3,6 +3,8 @@ import { z } from 'zod';
 // Module 1: Degree validation schema
 export const degreeSchema = z.object({
   code: z.string().min(1, 'Degree Code is required'),
+  faculty: z.string().min(1, 'Faculty is required'),
+  degree_no: z.coerce.number().int().positive('Degree Number must be a positive integer'),
   name_en: z.string().min(1, 'English name is required'),
   name_si: z.string().min(1, 'Sinhala name is required'),
   name_ta: z.string().min(1, 'Tamil name is required'),
@@ -17,6 +19,7 @@ export const studentSchema = z.object({
   full_name: z.string().min(1, 'Full Name is required'),
   registration_no: z.string().min(1, 'Registration Number is required'),
   index_no: z.string().min(1, 'Index Number is required'),
+  nic_no: z.string().min(1, 'NIC Number is required'),
   faculty: z.string().min(1, 'Faculty is required'),
   degree_name: z.string().min(1, 'Degree Name is required'), // This will map to a degree code or name in DB
   address: z.string().min(1, 'Address is required'),

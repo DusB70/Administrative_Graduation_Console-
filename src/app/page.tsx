@@ -13,60 +13,41 @@ export default function EntryPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [indexNo, setIndexNo] = useState('');
-  const [otp, setOtp] = useState('');
-  const [step, setStep] = useState<'credentials' | 'otp'>('credentials');
+  const [nicNo, setNicNo] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [isEmailLocked, setIsEmailLocked] = useState(false);
 
-  // Trigger passwordless MFA OTP
-  const handleSendOtp = async (e: React.FormEvent) => {
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const emailParam = params.get('email');
+      if (emailParam) {
+        setEmail(emailParam);
+        setIsEmailLocked(true);
+      }
+      const errorParam = params.get('error');
+      if (errorParam) {
+        setError(errorParam);
+      }
+    }
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !indexNo) return;
+    if (!email || !indexNo || !nicNo) return;
     
     setLoading(true);
     setError(null);
     setInfo(null);
 
     try {
-      const res = await fetch('/api/student/auth/send-otp', {
+      const res = await fetch('/api/student/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, index_no: indexNo }),
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setStep('otp');
-        setInfo('A 6-digit verification code has been generated and printed to the system logs.');
-      } else {
-        if (data.code === 'PORTAL_CLOSED') {
-          setError('Portal Closed: Registration access is currently inactive outside the configured timeline.');
-        } else {
-          setError(data.error || 'Student authentication checkpoint failed.');
-        }
-      }
-    } catch (err) {
-      setError('A network error occurred. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Verify OTP code and login
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!otp) return;
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const res = await fetch('/api/student/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, index_no: indexNo, code: otp }),
+        body: JSON.stringify({ email, index_no: indexNo, nic_no: nicNo }),
       });
 
       const data = await res.json();
@@ -74,7 +55,11 @@ export default function EntryPage() {
         // Redirect to RLS student dashboard
         router.push('/student');
       } else {
-        setError(data.error || 'Verification code is invalid or has expired.');
+        if (data.code === 'PORTAL_CLOSED') {
+          setError('Portal Closed: Registration access is currently inactive outside the configured timeline.');
+        } else {
+          setError(data.error || 'Student credentials verification failed.');
+        }
       }
     } catch (err) {
       setError('A network error occurred. Please try again.');
@@ -163,8 +148,7 @@ export default function EntryPage() {
                 </div>
               )}
 
-              {step === 'credentials' ? (
-                <form onSubmit={handleSendOtp} className="space-y-4">
+                <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="email" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
                       University Email Address
@@ -177,10 +161,16 @@ export default function EntryPage() {
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         required
-                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11"
+                        disabled={isEmailLocked}
+                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11 disabled:opacity-75 disabled:cursor-not-allowed"
                       />
                       <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 dark:text-slate-600" />
                     </div>
+                    {isEmailLocked && (
+                      <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-1">
+                        ✓ Email pre-filled and locked from verification link.
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -201,6 +191,24 @@ export default function EntryPage() {
                     </div>
                   </div>
 
+                  <div className="space-y-2">
+                    <Label htmlFor="nicNo" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                      NIC Number
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="nicNo"
+                        type="text"
+                        placeholder="200012345678"
+                        value={nicNo}
+                        onChange={(e) => setNicNo(e.target.value)}
+                        required
+                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11"
+                      />
+                      <ShieldCheck className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 dark:text-slate-600" />
+                    </div>
+                  </div>
+
                   <Button
                     type="submit"
                     disabled={loading}
@@ -209,50 +217,10 @@ export default function EntryPage() {
                     {loading ? (
                       <Loader2 className="h-5 w-5 animate-spin mx-auto text-white" />
                     ) : (
-                      'Request Verification OTP'
-                    )}
-                  </Button>
-                </form>
-              ) : (
-                <form onSubmit={handleVerifyOtp} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="otp" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider block text-center mb-2">
-                      Enter 6-Digit Verification Code
-                    </Label>
-                    <Input
-                      id="otp"
-                      type="text"
-                      maxLength={6}
-                      placeholder="• • • • • •"
-                      value={otp}
-                      onChange={(e) => setOtp(e.target.value)}
-                      required
-                      className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl text-center text-2xl font-bold tracking-[0.5em] h-14"
-                    />
-                  </div>
-
-                  <Button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl mt-2 shadow-lg shadow-blue-500/20"
-                  >
-                    {loading ? (
-                      <Loader2 className="h-5 w-5 animate-spin mx-auto text-white" />
-                    ) : (
                       'Verify & Enter Portal'
                     )}
                   </Button>
-
-                  <Button
-                    type="button"
-                    variant="link"
-                    onClick={() => setStep('credentials')}
-                    className="w-full text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs font-semibold mt-1"
-                  >
-                    Back to login details
-                  </Button>
                 </form>
-              )}
             </CardContent>
           </Card>
         </div>

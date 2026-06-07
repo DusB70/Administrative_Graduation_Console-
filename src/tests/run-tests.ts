@@ -1,34 +1,64 @@
 import { exec, ChildProcess } from 'child_process';
-import { pool, runMigrations, runAsStudent } from '../lib/db';
+import { Client } from 'pg';
 import { PDFDocument } from 'pdf-lib';
 import fs from 'fs';
 import path from 'path';
+import type { Pool } from 'pg';
+import type { runMigrations as runMigrationsType, runAsStudent as runAsStudentType } from '../lib/db';
+import type { signMagicToken as signMagicTokenType } from '../lib/auth';
 
 let serverProcess: ChildProcess | null = null;
 let PORT = 3001;
 let BASE_URL = `http://localhost:${PORT}`;
 
+let pool: Pool;
+let runMigrations: typeof runMigrationsType;
+let runAsStudent: typeof runAsStudentType;
+let signMagicToken: typeof signMagicTokenType;
+
 // Helper to wait for MS
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Start the Next.js dev server
-async function startServer(): Promise<void> {
-  // Check if a dev server is already running on port 3000
+function loadEnvLocal() {
   try {
-    const checkRes = await fetch(`http://localhost:3000/api/timeline`);
-    if (checkRes.status === 200) {
-      console.log('Detected Next.js dev server already running on port 3000. Running tests against it.');
-      PORT = 3000;
-      BASE_URL = `http://localhost:3000`;
-      return;
+    const envPath = path.join(process.cwd(), '.env.local');
+    if (fs.existsSync(envPath)) {
+      const envContent = fs.readFileSync(envPath, 'utf8');
+      for (const line of envContent.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          const [key, ...parts] = trimmed.split('=');
+          const val = parts.join('=').replace(/^['"]|['"]$/g, '');
+          const envKey = key.trim();
+          if (!process.env[envKey]) {
+            process.env[envKey] = val.trim();
+          }
+        }
+      }
     }
   } catch (err) {
-    // Port 3000 is not responding, continue starting server on PORT (3001)
+    console.error('Failed to load .env.local file programmatically:', err);
   }
+}
 
+// Start the Next.js dev server
+async function startServer(testDbUrl: string): Promise<void> {
   console.log(`Starting Next.js dev server on port ${PORT}...`);
   serverProcess = exec(`npx next dev -p ${PORT}`, {
-    env: { ...process.env, PORT: String(PORT), NODE_ENV: 'development' }
+    env: { 
+      ...process.env, 
+      PORT: String(PORT), 
+      NODE_ENV: 'development',
+      DATABASE_URL: testDbUrl,
+      NEXT_DIST_DIR: '.next_test'
+    }
+  });
+
+  serverProcess.stdout?.on('data', (data) => {
+    console.log(`[Next.js Dev Server]: ${data.toString().trim()}`);
+  });
+  serverProcess.stderr?.on('data', (data) => {
+    console.error(`[Next.js Dev Server ERROR]: ${data.toString().trim()}`);
   });
 
   // Wait for server to start responding
@@ -54,11 +84,122 @@ async function stopServer() {
     serverProcess.kill('SIGTERM');
     await sleep(2000);
   }
+  
+  console.log('Cleaning up all test/dummy data from database...');
+  const client = await pool.connect();
+  try {
+    await client.query('TRUNCATE TABLE audit_logs CASCADE');
+    await client.query('TRUNCATE TABLE otp_codes CASCADE');
+    await client.query('TRUNCATE TABLE students CASCADE');
+    await client.query('TRUNCATE TABLE degrees CASCADE');
+    await client.query('TRUNCATE TABLE staff CASCADE');
+    
+    // Seed default administrator back so admin user exists
+    await client.query(`
+      INSERT INTO staff (username, name, password_hash, role)
+      VALUES (
+        'admin',
+        'Exam Division Admin',
+        '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9',
+        'Administrator'
+      )
+    `);
+    console.log('Database cleaned successfully.');
+  } catch (err: any) {
+    console.error('Failed to clean up test data:', err.message);
+  } finally {
+    client.release();
+  }
+
   await pool.end();
 }
 
 async function runTests() {
   console.log('=== STARTING AUTOMATED TEST SUITE ===');
+
+  loadEnvLocal();
+  const originalDbUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/reg_platform';
+  
+  let adminDbUrl = originalDbUrl;
+  let testDbUrl = originalDbUrl;
+  
+  try {
+    const parsed = new URL(originalDbUrl);
+    parsed.pathname = '/postgres';
+    adminDbUrl = parsed.toString();
+    
+    parsed.pathname = '/reg_platform_test';
+    testDbUrl = parsed.toString();
+  } catch (err) {
+    console.error('Failed to parse DATABASE_URL as URL. Using defaults/fallback.');
+    adminDbUrl = 'postgresql://postgres:postgres@localhost:5432/postgres';
+    testDbUrl = 'postgresql://postgres:postgres@localhost:5432/reg_platform_test';
+  }
+
+  console.log('Ensuring test database exists...');
+  let connected = false;
+  let adminClient = new Client({ connectionString: adminDbUrl });
+  try {
+    await adminClient.connect();
+    connected = true;
+  } catch (err) {
+    console.log('Failed to connect to /postgres database, trying original database URL...');
+    adminClient = new Client({ connectionString: originalDbUrl });
+    try {
+      await adminClient.connect();
+      connected = true;
+    } catch (err2: any) {
+      console.error('Failed to connect to database cluster:', err2.message);
+      process.exit(1);
+    }
+  }
+
+  if (connected) {
+    try {
+      const res = await adminClient.query(
+        "SELECT 1 FROM pg_database WHERE datname = 'reg_platform_test'"
+      );
+      if (res.rows.length === 0) {
+        console.log('Creating test database reg_platform_test...');
+        await adminClient.query('CREATE DATABASE reg_platform_test');
+        console.log('Test database created successfully.');
+      } else {
+        console.log('Test database reg_platform_test already exists.');
+      }
+    } catch (err: any) {
+      console.error('Failed to check or create test database:', err.message);
+      process.exit(1);
+    } finally {
+      await adminClient.end();
+    }
+  }
+
+  process.env.DATABASE_URL = testDbUrl;
+  console.log(`DATABASE_URL set to test database: ${testDbUrl.replace(/:[^:@]+@/, ':****@')}`);
+
+  console.log('Initializing database client and models...');
+  const dbModule = await import('../lib/db');
+  pool = dbModule.pool;
+  runMigrations = dbModule.runMigrations;
+  runAsStudent = dbModule.runAsStudent;
+
+  const authModule = await import('../lib/auth');
+  signMagicToken = authModule.signMagicToken;
+
+  const dbUrl = process.env.DATABASE_URL || '';
+  const isRemote = dbUrl.includes('supabase.com') || dbUrl.includes('supabase.co') || (!dbUrl.includes('localhost') && !dbUrl.includes('127.0.0.1'));
+  const forceReset = process.env.FORCE_RESET_DB === 'true';
+
+  if (isRemote && !forceReset) {
+    console.error('\n❌ [SAFETY ABORT] The test suite was stopped to prevent data loss!');
+    console.error('The active database URL appears to point to a remote/live database:');
+    console.error(`  ${dbUrl.replace(/:[^:@]+@/, ':****@')}`);
+    console.error('\nRunning these tests will DROP all tables and erase all student and log data.');
+    console.error('If you are absolutely sure you want to reset this database and run tests, run:');
+    console.error('  Windows PowerShell: $env:FORCE_RESET_DB="true"; npm run test');
+    console.error('  Linux/macOS/Git Bash: FORCE_RESET_DB=true npm run test\n');
+    process.exit(1);
+  }
 
   // Reset database before testing
   console.log('Resetting database schema...');
@@ -69,6 +210,7 @@ async function runTests() {
     await client.query('DROP TABLE IF EXISTS students CASCADE');
     await client.query('DROP TABLE IF EXISTS registration_windows CASCADE');
     await client.query('DROP TABLE IF EXISTS degrees CASCADE');
+    await client.query('DROP TABLE IF EXISTS staff CASCADE');
   } finally {
     client.release();
   }
@@ -87,7 +229,7 @@ async function runTests() {
   }
 
   // Start server
-  await startServer();
+  await startServer(testDbUrl);
 
   try {
     // ----------------------------------------------------
@@ -123,6 +265,8 @@ async function runTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         code: 'BSc-CS',
+        faculty: 'Faculty of Applied Science',
+        degree_no: 1,
         name_en: 'BSc in Computer Science',
         name_si: 'පරිගණක විද්‍යා උපාධිය',
         name_ta: 'கணினி அறிவியல் பட்டம்',
@@ -137,6 +281,8 @@ async function runTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         code: 'BIT',
+        faculty: 'Faculty of Social Science and Humanities',
+        degree_no: 1,
         name_en: 'Bachelor of Information Technology',
         name_si: 'තොරතුරු තාක්ෂණ උපාධිය',
         name_ta: 'தகவல் தொழில்நுட்ப பட்டம்',
@@ -149,13 +295,13 @@ async function runTests() {
     const getDegreesRes = await fetch(`${BASE_URL}/api/degrees`);
     const degreesList = (await getDegreesRes.json()).data;
     
-    const hasCS = degreesList.some((d: any) => d.code === 'BSc-CS');
-    const hasBIT = degreesList.some((d: any) => d.code === 'BIT');
+    const hasCS = degreesList.some((d: any) => d.code === 'BSc-CS' && d.faculty === 'Faculty of Applied Science' && d.degree_no === 1);
+    const hasBIT = degreesList.some((d: any) => d.code === 'BIT' && d.faculty === 'Faculty of Social Science and Humanities' && d.degree_no === 1);
 
     if (hasCS && hasBIT) {
       console.log('✓ Success: Degrees successfully created and immediate database population verified.');
     } else {
-      throw new Error(`Integration Test Failed! Created degrees not found in list.`);
+      throw new Error(`Integration Test Failed! Created degrees not found in list or missing new fields.`);
     }
 
     // ----------------------------------------------------
@@ -172,6 +318,7 @@ async function runTests() {
             full_name: 'Aruni Silva',
             registration_no: '2022/CS/101',
             index_no: '22001015',
+            nic_no: '200112345678',
             faculty: 'Faculty of Applied Science',
             degree_name: 'BSc-CS',
             address: 'Colombo 7',
@@ -185,6 +332,7 @@ async function runTests() {
             full_name: 'Xavier Perera',
             registration_no: '2022/IS/201',
             index_no: '22002011',
+            nic_no: '200187654321',
             faculty: 'Faculty of Technology',
             degree_name: 'UNKNOWN_DEGREE', // Non-existing degree validation
             address: 'Kandy',
@@ -221,6 +369,7 @@ async function runTests() {
         full_name: `Student Full Name ${i}`,
         registration_no: `REG/2026/${1000 + i}`,
         index_no: `INDEX-${260000 + i}`,
+        nic_no: `NIC-${260000 + i}`,
         faculty: i <= 250 ? 'Faculty of Applied Science' : 'Faculty of Social Science and Humanities',
         degreeId: i <= 250 ? deg1.id : deg2.id, // BSc-CS or BIT
         address: `Student Address Line, Road ${i}`,
@@ -266,13 +415,14 @@ async function runTests() {
       throw new Error('Could not set timeline for boundary test.');
     }
 
-    // Attempt student login (via send-otp) targeting mock student
-    const loginRes = await fetch(`${BASE_URL}/api/student/auth/send-otp`, {
+    // Attempt student login targeting mock student
+    const loginRes = await fetch(`${BASE_URL}/api/student/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'student1@uni.ac.lk',
-        index_no: 'INDEX-260001'
+        index_no: 'INDEX-260001',
+        nic_no: 'NIC-260001'
       })
     });
 
@@ -303,25 +453,15 @@ async function runTests() {
     console.log('\n[TEST 6] Running RLS Security / Penetration Test...');
     
     // Acquire active session for Student 1
-    // Generate OTP (printed in logs or extracted via direct query for test convenience)
     const st1Email = 'student1@uni.ac.lk';
     const st1Index = 'INDEX-260001';
-    
-    await fetch(`${BASE_URL}/api/student/auth/send-otp`, {
+    const st1Nic = 'NIC-260001';
+
+    // Verify credentials and capture the session cookie directly
+    const verifyRes = await fetch(`${BASE_URL}/api/student/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: st1Email, index_no: st1Index })
-    });
-
-    // Pull code directly from database for programmatic login
-    const otpRes = await pool.query('SELECT code FROM otp_codes WHERE email = $1', [st1Email]);
-    const otp = otpRes.rows[0].code;
-
-    // Verify OTP and capture the session cookie
-    const verifyRes = await fetch(`${BASE_URL}/api/student/auth/verify-otp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: st1Email, index_no: st1Index, code: otp })
+      body: JSON.stringify({ email: st1Email, index_no: st1Index, nic_no: st1Nic })
     });
 
     const cookieHeader = verifyRes.headers.get('set-cookie');
@@ -380,9 +520,48 @@ async function runTests() {
     }
 
     // ----------------------------------------------------
-    // Test 8: Audit Log Test (Admin updates logging)
+    // Test 8: Admin Authentication and Security Test
     // ----------------------------------------------------
-    console.log('\n[TEST 8] Running Audit Log override verification test...');
+    console.log('\n[TEST 8] Running Admin Authentication & Security Test...');
+    
+    // 8a. Verify administrative endpoint rejects unauthenticated request
+    const unauthRes = await fetch(`${BASE_URL}/api/admin/logs`);
+    if (unauthRes.status === 401) {
+      console.log('✓ Success: Administrative endpoint rejected unauthenticated request.');
+    } else {
+      throw new Error(`Security Test Failed! Allowed unauthenticated access to /api/admin/logs. Status: ${unauthRes.status}`);
+    }
+
+    // 8b. Verify login fails with incorrect credentials
+    const badLoginRes = await fetch(`${BASE_URL}/api/admin/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'wrongpassword' })
+    });
+    if (badLoginRes.status === 401) {
+      console.log('✓ Success: Staff login correctly rejected incorrect credentials.');
+    } else {
+      throw new Error(`Auth Test Failed! Allowed login with invalid credentials. Status: ${badLoginRes.status}`);
+    }
+
+    // 8c. Verify login succeeds with correct credentials
+    const goodLoginRes = await fetch(`${BASE_URL}/api/admin/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin123' })
+    });
+    
+    const adminCookieHeader = goodLoginRes.headers.get('set-cookie');
+    if (goodLoginRes.status === 200 && adminCookieHeader) {
+      console.log('✓ Success: Staff login accepted valid credentials and returned admin_session cookie.');
+    } else {
+      throw new Error(`Auth Test Failed! Correct credentials rejected. Status: ${goodLoginRes.status}, Cookie: ${adminCookieHeader}`);
+    }
+
+    // ----------------------------------------------------
+    // Test 9: Audit Log Test (Admin updates logging)
+    // ----------------------------------------------------
+    console.log('\n[TEST 9] Running Audit Log override verification test...');
     
     // First, student1 updates profile (request name correction, upload photo/slip, and confirms attendance)
     await fetch(`${BASE_URL}/api/student/profile`, {
@@ -428,11 +607,13 @@ async function runTests() {
     // Now admin reviews and approves changes (performing the name override)
     const adminReviewRes = await fetch(`${BASE_URL}/api/admin/review`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': adminCookieHeader
+      },
       body: JSON.stringify({
         studentId: lockedProfile.id,
-        action: 'approve',
-        adminId: 'ADMIN_TEST_RUNNER'
+        action: 'approve'
       })
     });
 
@@ -440,7 +621,7 @@ async function runTests() {
     
     // Check if the change was logged in audit_logs
     const auditLogsRes = await pool.query(
-      "SELECT * FROM audit_logs WHERE admin_id = 'ADMIN_TEST_RUNNER' AND student_id = $1",
+      "SELECT * FROM audit_logs WHERE admin_id = 'admin' AND student_id = $1",
       [lockedProfile.id]
     );
     
@@ -451,9 +632,9 @@ async function runTests() {
     }
 
     // ----------------------------------------------------
-    // Test 9: Algorithmic Edge Case Test (Seating Allocation)
+    // Test 10: Algorithmic Edge Case Test (Seating Allocation)
     // ----------------------------------------------------
-    console.log('\n[TEST 9] Running Seating Allocation Algorithmic Edge Case Test...');
+    console.log('\n[TEST 10] Running Seating Allocation Algorithmic Edge Case Test...');
     
     // Approve all students so they are eligible for seating allocation
     await pool.query("UPDATE students SET verification_status = 'Approved'");
@@ -461,7 +642,10 @@ async function runTests() {
     // Assign "Faculty of Applied Science" (250 students) to Session 1
     const assignFac1 = await fetch(`${BASE_URL}/api/admin/sessions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': adminCookieHeader
+      },
       body: JSON.stringify({ faculty: 'Faculty of Applied Science', sessionNumber: 1 })
     });
     const allocation1 = (await assignFac1.json()).data;
@@ -469,7 +653,10 @@ async function runTests() {
     // Assign "Faculty of Social Science and Humanities" (250 students) to Session 1
     const assignFac2 = await fetch(`${BASE_URL}/api/admin/sessions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': adminCookieHeader
+      },
       body: JSON.stringify({ faculty: 'Faculty of Social Science and Humanities', sessionNumber: 1 })
     });
     const allocation2 = (await assignFac2.json()).data;
@@ -485,9 +672,9 @@ async function runTests() {
     }
 
     // ----------------------------------------------------
-    // Test 10: Asynchronous Queue Test (Certificates)
+    // Test 11: Asynchronous Queue Test (Certificates)
     // ----------------------------------------------------
-    console.log('\n[TEST 10] Running Asynchronous Worker Queue Test...');
+    console.log('\n[TEST 11] Running Asynchronous Worker Queue Test...');
 
     // Approve the remaining students to generate certificates for all 500
     console.log('  Approving batch records in DB to enable certificate compilation...');
@@ -495,7 +682,10 @@ async function runTests() {
 
     const startCertTime = Date.now();
     const certTriggerRes = await fetch(`${BASE_URL}/api/admin/certificates`, {
-      method: 'POST'
+      method: 'POST',
+      headers: {
+        'Cookie': adminCookieHeader
+      }
     });
 
     const triggerDuration = Date.now() - startCertTime;
@@ -510,7 +700,11 @@ async function runTests() {
     console.log('  Polling worker task status...');
     let statusData: any = {};
     for (let i = 0; i < 60; i++) {
-      const statRes = await fetch(`${BASE_URL}/api/admin/certificates`);
+      const statRes = await fetch(`${BASE_URL}/api/admin/certificates`, {
+        headers: {
+          'Cookie': adminCookieHeader
+        }
+      });
       statusData = (await statRes.json()).data;
       
       if (statusData.status === 'completed') {
@@ -529,9 +723,9 @@ async function runTests() {
     }
 
     // ----------------------------------------------------
-    // Test 11: Output Integrity Test (Master PDF verification)
+    // Test 12: Output Integrity Test (Master PDF verification)
     // ----------------------------------------------------
-    console.log('\n[TEST 11] Running Master PDF Output Integrity Test...');
+    console.log('\n[TEST 12] Running Master PDF Output Integrity Test...');
     const pdfRelativePath = statusData.outputPath; // relative URL, e.g. /certificates/...
     const pdfFullPath = path.join(process.cwd(), 'public', pdfRelativePath);
 
@@ -550,6 +744,34 @@ async function runTests() {
       console.log(`✓ Success: Duplex structure confirmed. Master PDF contains exactly ${totalPages} pages (2 pages per student).`);
     } else {
       throw new Error(`Output Integrity Test Failed! Page count = ${totalPages}, expected = ${expectedPages}`);
+    }
+
+    // ----------------------------------------------------
+    // Test 13: Student Magic Link Sign-in Test
+    // ----------------------------------------------------
+    console.log('\n[TEST 13] Running Student Magic Link Sign-in Test...');
+    
+    const testEmail = 'student1@uni.ac.lk';
+    const testIndex = 'INDEX-260001';
+    
+    // Generate valid magic link token
+    const magicToken = signMagicToken(testEmail, testIndex);
+    
+    // Attempt magic login request
+    const magicLoginRes = await fetch(`${BASE_URL}/api/student/auth/magic-login?email=${encodeURIComponent(testEmail)}&token=${magicToken}`, {
+      redirect: 'manual'
+    });
+    
+    const redirectUrl = magicLoginRes.headers.get('location');
+    
+    if (magicLoginRes.status === 307 || magicLoginRes.status === 302) {
+      if (redirectUrl && redirectUrl.includes(`/?email=${encodeURIComponent(testEmail)}`)) {
+        console.log('✓ Success: Magic login accepted valid token, redirected to login page with prefilled email.');
+      } else {
+        throw new Error(`Magic login redirect validation failed. Redirect Location: ${redirectUrl}`);
+      }
+    } else {
+      throw new Error(`Magic login test failed. Status: ${magicLoginRes.status}`);
     }
 
     console.log('\n=== ALL TESTS PASSED SUCCESSFULLY! ===');

@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { runAsAdmin } from '@/lib/db';
+import { getAdminSession } from '@/lib/auth';
 
 export async function GET() {
   try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     const data = await runAsAdmin(async (client) => {
       // Get count of students assigned to each session grouped by faculty
       const res = await client.query(`
@@ -23,6 +29,11 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { faculty, sessionNumber } = await req.json();
 
     if (!faculty || sessionNumber === undefined) {

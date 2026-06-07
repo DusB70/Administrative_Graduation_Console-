@@ -25,14 +25,14 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    const { code, name_en, name_si, name_ta, type } = parsed.data;
+    const { code, faculty, degree_no, name_en, name_si, name_ta, type } = parsed.data;
 
     const data = await runAsAdmin(async (client) => {
       const res = await client.query(
-        `INSERT INTO degrees (code, name_en, name_si, name_ta, type)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO degrees (code, faculty, degree_no, name_en, name_si, name_ta, type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [code, name_en, name_si, name_ta, type]
+        [code, faculty, degree_no, name_en, name_si, name_ta, type]
       );
       return res.rows[0];
     });
@@ -40,9 +40,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, data });
   } catch (err: any) {
     if (err.code === '23505') {
+      const isDegreeNo = err.message.includes('unique_faculty_degree_no');
       return NextResponse.json({
         success: false,
-        error: 'Degree Code already exists'
+        error: isDegreeNo
+          ? 'Degree number already exists for this faculty.'
+          : 'Degree Code already exists.'
       }, { status: 409 });
     }
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });

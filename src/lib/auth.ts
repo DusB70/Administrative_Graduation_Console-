@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { cookies } from 'next/headers';
 import { runAsAdmin } from './db';
 
 const SECRET = process.env.JWT_ACCESS_SECRET || 'university-graduation-system-secure-key-2026';
@@ -49,3 +50,66 @@ export async function isRegistrationWindowOpen(mockTimeHeader?: string | null): 
   const isOpen = checkTime >= openTime && checkTime <= closeTime && !activeWindow.is_manually_closed;
   return { isOpen, window: activeWindow };
 }
+
+export interface AuthAdmin {
+  username: string;
+  name: string;
+  role: string;
+}
+
+export function signAdminToken(payload: AuthAdmin): string {
+  const data = JSON.stringify(payload);
+  const signature = crypto.createHmac('sha256', SECRET).update(data).digest('hex');
+  return `${Buffer.from(data).toString('base64')}.${signature}`;
+}
+
+export function verifyAdminToken(token: string): AuthAdmin | null {
+  try {
+    const [dataBase64, signature] = token.split('.');
+    if (!dataBase64 || !signature) return null;
+    const data = Buffer.from(dataBase64, 'base64').toString('utf8');
+    const expectedSignature = crypto.createHmac('sha256', SECRET).update(data).digest('hex');
+    if (signature !== expectedSignature) return null;
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+export async function getAdminSession(): Promise<AuthAdmin | null> {
+  try {
+    const cookieStore = await cookies();
+    const token = cookieStore.get('admin_session')?.value;
+    if (!token) return null;
+    return verifyAdminToken(token);
+  } catch {
+    return null;
+  }
+}
+
+export function signMagicToken(email: string, index_no: string): string {
+  const payload = {
+    email: email.toLowerCase().trim(),
+    index_no: index_no.trim(),
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days expiry
+  };
+  const data = JSON.stringify(payload);
+  const signature = crypto.createHmac('sha256', SECRET).update(data).digest('hex');
+  return `${Buffer.from(data).toString('base64')}.${signature}`;
+}
+
+export function verifyMagicToken(token: string): { email: string; index_no: string } | null {
+  try {
+    const [dataBase64, signature] = token.split('.');
+    if (!dataBase64 || !signature) return null;
+    const data = Buffer.from(dataBase64, 'base64').toString('utf8');
+    const expectedSignature = crypto.createHmac('sha256', SECRET).update(data).digest('hex');
+    if (signature !== expectedSignature) return null;
+    const payload = JSON.parse(data);
+    if (Date.now() > payload.exp) return null;
+    return { email: payload.email, index_no: payload.index_no };
+  } catch {
+    return null;
+  }
+}
+

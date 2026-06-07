@@ -13,6 +13,7 @@ $$;
 GRANT app_user TO postgres;
 
 -- Drop existing tables if they exist to start fresh
+DROP TABLE IF EXISTS staff CASCADE;
 DROP TABLE IF EXISTS audit_logs CASCADE;
 DROP TABLE IF EXISTS otp_codes CASCADE;
 DROP TABLE IF EXISTS students CASCADE;
@@ -23,12 +24,15 @@ DROP TABLE IF EXISTS degrees CASCADE;
 CREATE TABLE degrees (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   code VARCHAR(50) UNIQUE NOT NULL,
+  faculty VARCHAR(100) NOT NULL,
+  degree_no INT NOT NULL,
   name_en VARCHAR(255) NOT NULL,
   name_si VARCHAR(255) NOT NULL,
   name_ta VARCHAR(255) NOT NULL,
   type VARCHAR(50) NOT NULL CHECK (type IN ('Internal', 'External')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT unique_faculty_degree_no UNIQUE (faculty, degree_no)
 );
 
 -- Module 3: Timeline & Registration Control
@@ -44,6 +48,7 @@ CREATE TABLE registration_windows (
 CREATE TABLE students (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   index_no VARCHAR(100) UNIQUE NOT NULL,
+  nic_no VARCHAR(50) UNIQUE NOT NULL,
   registration_no VARCHAR(100) UNIQUE NOT NULL,
   email VARCHAR(255) UNIQUE NOT NULL,
   name_with_initials VARCHAR(255) NOT NULL,
@@ -83,6 +88,15 @@ CREATE INDEX idx_students_faculty ON students(faculty);
 ALTER TABLE students ENABLE ROW LEVEL SECURITY;
 ALTER TABLE students FORCE ROW LEVEL SECURITY;
 
+ALTER TABLE degrees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE degrees FORCE ROW LEVEL SECURITY;
+
+-- RLS Policies
+DROP POLICY IF EXISTS select_degrees_policy ON degrees;
+CREATE POLICY select_degrees_policy ON degrees
+  FOR SELECT
+  USING (true);
+
 -- RLS Policy
 DROP POLICY IF EXISTS student_self_service_policy ON students;
 CREATE POLICY student_self_service_policy ON students
@@ -116,6 +130,25 @@ CREATE TABLE audit_logs (
 -- Seed an initial registration window (e.g. active from now till next month)
 INSERT INTO registration_windows (open_date, close_date)
 VALUES (CURRENT_TIMESTAMP - INTERVAL '1 day', CURRENT_TIMESTAMP + INTERVAL '30 days');
+
+-- Staff Table for Exam Division Login
+CREATE TABLE staff (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  username VARCHAR(100) UNIQUE NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  role VARCHAR(50) DEFAULT 'Staff',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seed initial Exam Division admin user (password: 'admin123')
+INSERT INTO staff (username, name, password_hash, role)
+VALUES (
+  'admin',
+  'Exam Division Admin',
+  '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9',
+  'Administrator'
+) ON CONFLICT (username) DO NOTHING;
 
 -- Grant all privileges to the app_user role so it can query and modify inside the RLS context
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app_user;

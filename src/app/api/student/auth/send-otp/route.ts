@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { runAsAdmin } from '@/lib/db';
 import { isRegistrationWindowOpen } from '@/lib/auth';
+import { sendEmail, getOtpTemplate } from '@/lib/email';
 
 export async function POST(req: Request) {
   try {
@@ -45,8 +46,12 @@ export async function POST(req: Request) {
       );
     });
 
-    // Output OTP in system logs for local testing
-    console.log(`[MOCK EMAIL SERVICE] OTP for student ${email} is ${otp}`);
+    // Dispatch verification OTP email
+    await sendEmail({
+      to: [{ email: email.toLowerCase().trim() }],
+      subject: `${otp} is your Graduation Portal Verification Code`,
+      htmlContent: getOtpTemplate(otp)
+    });
 
     return NextResponse.json({ success: true, message: 'OTP sent successfully.' });
   } catch (err: any) {

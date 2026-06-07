@@ -18,7 +18,7 @@ export async function GET() {
 
     const data = await runAsStudent(payload.email, async (client) => {
       const res = await client.query(
-        `SELECT s.*, d.code as degree_code, d.name_en as degree_name_en, d.type as degree_type
+        `SELECT s.*, d.code as degree_code, d.name_en as degree_name_en, d.type as degree_type, d.faculty as degree_faculty, d.degree_no as degree_number
          FROM students s
          LEFT JOIN degrees d ON s.degree_id = d.id
          WHERE LOWER(s.email) = LOWER($1)`,

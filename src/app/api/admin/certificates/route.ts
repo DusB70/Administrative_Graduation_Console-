@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { runAsAdmin } from '@/lib/db';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { getAdminSession } from '@/lib/auth';
 
 // Extend node global scope for status tracking
 declare global {
@@ -109,11 +110,24 @@ async function ensureTemplates() {
 }
 
 export async function GET() {
-  return NextResponse.json({ success: true, data: global.certTaskStatus });
+  try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+    return NextResponse.json({ success: true, data: global.certTaskStatus });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+  }
 }
 
 export async function POST() {
   try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     if (global.certTaskStatus?.status === 'processing') {
       return NextResponse.json({ success: false, error: 'A certificate generation task is already in progress.' }, { status: 400 });
     }

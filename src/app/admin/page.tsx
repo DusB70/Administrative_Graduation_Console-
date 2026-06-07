@@ -38,6 +38,8 @@ export default function AdminDashboard() {
   // 1. COURSE MANAGER STATE
   const [degrees, setDegrees] = useState<any[]>([]);
   const [degCode, setDegCode] = useState('');
+  const [degFaculty, setDegFaculty] = useState('Faculty of Technology');
+  const [degNo, setDegNo] = useState('');
   const [degEn, setDegEn] = useState('');
   const [degSi, setDegSi] = useState('');
   const [degTa, setDegTa] = useState('');
@@ -172,6 +174,8 @@ export default function AdminDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code: degCode,
+          faculty: degFaculty,
+          degree_no: degNo,
           name_en: degEn,
           name_si: degSi,
           name_ta: degTa,
@@ -183,6 +187,7 @@ export default function AdminDashboard() {
       if (res.ok) {
         triggerAlert(true, 'Degree course added successfully!');
         setDegCode('');
+        setDegNo('');
         setDegEn('');
         setDegSi('');
         setDegTa('');
@@ -225,7 +230,7 @@ export default function AdminDashboard() {
         const isHeader = firstRow && firstRow.some(cell => {
           if (typeof cell === 'string') {
             const lower = cell.toLowerCase().trim();
-            return ['no', 'reg no', 'index no', 'full name', 'name with initials', 'gpa', 'class', 'degree', 'email', 'address', 'contact no'].includes(lower);
+            return ['no', 'reg no', 'index no', 'index', 'nic', 'nic no', 'full name', 'name with initials', 'name with initails', 'gpa', 'class', 'degree', 'email', 'address', 'contact no', 'contactno.', 'contactno'].includes(lower);
           }
           return false;
         });
@@ -243,14 +248,15 @@ export default function AdminDashboard() {
           mappedRows.push({
             registration_no: r[1] !== undefined && r[1] !== null ? String(r[1]).trim() : '',
             index_no: r[2] !== undefined && r[2] !== null ? String(r[2]).trim() : '',
-            full_name: r[3] !== undefined && r[3] !== null ? String(r[3]).trim() : '',
-            name_with_initials: r[4] !== undefined && r[4] !== null ? String(r[4]).trim() : '',
-            gpa: r[5] !== undefined && r[5] !== null && r[5] !== '' ? r[5] : null,
-            class: r[6] !== undefined && r[6] !== null ? String(r[6]).trim() : '',
-            degree_name: r[7] !== undefined && r[7] !== null ? String(r[7]).trim() : '',
-            email: r[8] !== undefined && r[8] !== null ? String(r[8]).trim() : '',
-            address: r[9] !== undefined && r[9] !== null ? String(r[9]).trim() : '',
-            contact_no: r[10] !== undefined && r[10] !== null ? String(r[10]).trim() : '',
+            nic_no: r[3] !== undefined && r[3] !== null ? String(r[3]).trim() : '',
+            full_name: r[4] !== undefined && r[4] !== null ? String(r[4]).trim() : '',
+            name_with_initials: r[5] !== undefined && r[5] !== null ? String(r[5]).trim() : '',
+            gpa: r[6] !== undefined && r[6] !== null && r[6] !== '' ? r[6] : null,
+            class: r[7] !== undefined && r[7] !== null ? String(r[7]).trim() : '',
+            degree_name: r[8] !== undefined && r[8] !== null ? String(r[8]).trim() : '',
+            email: r[9] !== undefined && r[9] !== null ? String(r[9]).trim() : '',
+            address: r[10] !== undefined && r[10] !== null ? String(r[10]).trim() : '',
+            contact_no: r[11] !== undefined && r[11] !== null ? String(r[11]).trim() : '',
             faculty: ingestFaculty
           });
         }
@@ -517,6 +523,7 @@ export default function AdminDashboard() {
                 <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2 w-12">Row</TableHead>
                 <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">Index No</TableHead>
                 <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">Reg No</TableHead>
+                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">NIC No</TableHead>
                 <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">Full Name</TableHead>
                 <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">Name with Initials</TableHead>
                 <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">Email Address</TableHead>
@@ -537,6 +544,9 @@ export default function AdminDashboard() {
                   </TableCell>
                   <TableCell className={`px-3 py-2 ${r.errors.registration_no ? 'text-red-600 dark:text-red-400 bg-red-500/5 dark:bg-red-950/20' : 'text-slate-700 dark:text-slate-300'}`}>
                     {r.data.registration_no}
+                  </TableCell>
+                  <TableCell className={`px-3 py-2 ${r.errors.nic_no ? 'text-red-600 dark:text-red-400 bg-red-500/5 dark:bg-red-950/20' : 'text-slate-700 dark:text-slate-300'}`}>
+                    {r.data.nic_no}
                   </TableCell>
                   <TableCell className="px-3 py-2 text-slate-800 dark:text-slate-300 font-semibold">{r.data.full_name}</TableCell>
                   <TableCell className="px-3 py-2 text-slate-800 dark:text-slate-300 font-semibold">{r.data.name_with_initials}</TableCell>
@@ -664,6 +674,23 @@ export default function AdminDashboard() {
                   <CardContent>
                     <form onSubmit={handleAddDegree} className="space-y-4">
                       <div className="space-y-1.5">
+                        <Label htmlFor="degFaculty" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Faculty</Label>
+                        <select
+                          id="degFaculty"
+                          value={degFaculty}
+                          onChange={(e) => setDegFaculty(e.target.value)}
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none h-9"
+                        >
+                          {FACULTIES.map((fac) => (
+                            <option key={fac} value={fac}>{fac}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="degNo" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Degree No</Label>
+                        <Input id="degNo" type="number" required min="1" value={degNo} onChange={(e) => setDegNo(e.target.value)} placeholder="e.g. 1" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                      </div>
+                      <div className="space-y-1.5">
                         <Label htmlFor="degCode" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Degree Code</Label>
                         <Input id="degCode" required value={degCode} onChange={(e) => setDegCode(e.target.value)} placeholder="BSc-CS" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
                       </div>
@@ -685,7 +712,7 @@ export default function AdminDashboard() {
                           id="degType"
                           value={degType}
                           onChange={(e) => setDegType(e.target.value as any)}
-                          className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none"
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none h-9"
                         >
                           <option value="Internal">Internal</option>
                           <option value="External">External</option>
@@ -708,22 +735,26 @@ export default function AdminDashboard() {
                     <Table className="text-xs">
                       <TableHeader className="bg-slate-100/50 dark:bg-slate-950/50">
                         <TableRow className="border-b border-slate-200 dark:border-slate-900">
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Faculty</TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">No</TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Code</TableHead>
-                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Name (English)</TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Name (English / Sinhala / Tamil)</TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Type</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody className="divide-y divide-slate-100 dark:divide-slate-900 font-medium">
                         {degrees.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={3} className="text-center py-8 text-slate-500">No degrees registered. Add one using the form.</TableCell>
+                            <TableCell colSpan={5} className="text-center py-8 text-slate-500">No degrees registered. Add one using the form.</TableCell>
                           </TableRow>
                         ) : (
                           degrees.map((d) => (
                             <TableRow key={d.id} className="border-b border-slate-200 dark:border-slate-900 hover:bg-slate-100/30 dark:hover:bg-slate-900/10 transition-colors">
+                              <TableCell className="px-4 py-2.5 text-slate-800 dark:text-slate-350">{d.faculty}</TableCell>
+                              <TableCell className="px-4 py-2.5 font-bold text-slate-900 dark:text-white">{d.degree_no}</TableCell>
                               <TableCell className="px-4 py-2.5 font-bold text-slate-900 dark:text-white">{d.code}</TableCell>
                               <TableCell className="px-4 py-2.5 text-slate-800 dark:text-slate-300">
-                                <div>{d.name_en}</div>
+                                <div className="font-bold text-slate-900 dark:text-white">{d.name_en}</div>
                                 <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{d.name_si} | {d.name_ta}</div>
                               </TableCell>
                               <TableCell className="px-4 py-2.5">
@@ -1013,6 +1044,11 @@ export default function AdminDashboard() {
                           <div className="space-y-1">
                             <span className="text-[9px] text-slate-400 dark:text-slate-600 font-bold block">FULL NAME</span>
                             <span className="text-xs font-semibold text-slate-800 dark:text-slate-300 block">{selectedStudent.full_name}</span>
+                          </div>
+
+                          <div className="space-y-1">
+                            <span className="text-[9px] text-slate-400 dark:text-slate-600 font-bold block">NIC NUMBER</span>
+                            <span className="text-xs font-semibold text-slate-800 dark:text-slate-300 block">{selectedStudent.nic_no || 'N/A'}</span>
                           </div>
 
                           <div className="space-y-1">

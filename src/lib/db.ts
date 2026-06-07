@@ -61,6 +61,41 @@ export async function runMigrations() {
         ALTER TABLE registration_windows 
         ADD COLUMN IF NOT EXISTS is_manually_closed BOOLEAN DEFAULT FALSE;
       `);
+
+      await client.query(`
+        ALTER TABLE students 
+        ADD COLUMN IF NOT EXISTS nic_no VARCHAR(50) UNIQUE;
+      `);
+
+      await client.query(`
+        ALTER TABLE degrees ADD COLUMN IF NOT EXISTS faculty VARCHAR(100);
+        ALTER TABLE degrees ADD COLUMN IF NOT EXISTS degree_no INT;
+      `);
+
+      await client.query(`
+        UPDATE degrees SET faculty = 'Faculty of Technology' WHERE faculty IS NULL;
+        UPDATE degrees SET degree_no = 1 WHERE degree_no IS NULL;
+      `);
+
+      await client.query(`
+        ALTER TABLE degrees ALTER COLUMN faculty SET NOT NULL;
+        ALTER TABLE degrees ALTER COLUMN degree_no SET NOT NULL;
+      `);
+
+      await client.query(`
+        ALTER TABLE degrees DROP CONSTRAINT IF EXISTS unique_faculty_degree_no;
+        ALTER TABLE degrees ADD CONSTRAINT unique_faculty_degree_no UNIQUE (faculty, degree_no);
+      `);
+
+      await client.query(`
+        ALTER TABLE degrees ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE degrees FORCE ROW LEVEL SECURITY;
+      `);
+
+      await client.query(`
+        DROP POLICY IF EXISTS select_degrees_policy ON degrees;
+        CREATE POLICY select_degrees_policy ON degrees FOR SELECT USING (true);
+      `);
     }
   } catch (err) {
     console.error('Error running migrations:', err);

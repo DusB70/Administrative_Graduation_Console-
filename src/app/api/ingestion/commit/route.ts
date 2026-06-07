@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { runAsAdmin } from '@/lib/db';
+import { signMagicToken } from '@/lib/auth';
+import { sendEmail, getMagicLinkTemplate } from '@/lib/email';
 
 export async function POST(req: Request) {
   try {
@@ -22,6 +24,7 @@ export async function POST(req: Request) {
           full_name,
           registration_no,
           index_no,
+          nic_no,
           faculty,
           degreeId,
           address,
@@ -32,7 +35,7 @@ export async function POST(req: Request) {
         } = row;
 
         placeholders.push(
-          `($${index}, $${index + 1}, $${index + 2}, $${index + 3}, $${index + 4}, $${index + 5}, $${index + 6}, $${index + 7}, $${index + 8}, $${index + 9}, $${index + 10})`
+          `($${index}, $${index + 1}, $${index + 2}, $${index + 3}, $${index + 4}, $${index + 5}, $${index + 6}, $${index + 7}, $${index + 8}, $${index + 9}, $${index + 10}, $${index + 11})`
         );
 
         values.push(
@@ -40,6 +43,7 @@ export async function POST(req: Request) {
           full_name,
           registration_no,
           index_no,
+          nic_no,
           faculty,
           degreeId,
           address,
@@ -49,16 +53,17 @@ export async function POST(req: Request) {
           classVal
         );
         
-        index += 11;
+        index += 12;
       }
 
       const query = `
         INSERT INTO students (
-          name_with_initials, full_name, registration_no, index_no, faculty, degree_id, address, contact_no, email, gpa, class
+          name_with_initials, full_name, registration_no, index_no, nic_no, faculty, degree_id, address, contact_no, email, gpa, class
         )
         VALUES ${placeholders.join(', ')}
         ON CONFLICT (index_no) DO UPDATE SET
           registration_no = EXCLUDED.registration_no,
+          nic_no = EXCLUDED.nic_no,
           email = EXCLUDED.email,
           name_with_initials = EXCLUDED.name_with_initials,
           full_name = EXCLUDED.full_name,
@@ -75,11 +80,36 @@ export async function POST(req: Request) {
     });
 
     const durationMs = Date.now() - startTime;
+    const { origin } = new URL(req.url);
+
+    const notifications = [];
+    for (const row of rows) {
+      const magicLink = `${origin}/?email=${encodeURIComponent(row.email.toLowerCase().trim())}`;
+
+      try {
+        // Dispatch magic link email via Brevo
+        await sendEmail({
+          to: [{ email: row.email.toLowerCase().trim(), name: row.name_with_initials }],
+          subject: 'Convocation Registration - Action Required',
+          htmlContent: getMagicLinkTemplate(row.name_with_initials, magicLink)
+        });
+      } catch (err: any) {
+        console.error(`Failed to send onboarding email to ${row.email}:`, err.message);
+      }
+
+      notifications.push({
+        email: row.email,
+        index_no: row.index_no,
+        name: row.name_with_initials,
+        magicLink
+      });
+    }
 
     return NextResponse.json({
       success: true,
       count: rows.length,
       durationMs,
+      notifications
     });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });

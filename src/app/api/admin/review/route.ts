@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
 import { runAsAdmin } from '@/lib/db';
+import { getAdminSession } from '@/lib/auth';
+import { sendEmail, getRejectionTemplate } from '@/lib/email';
 
 export async function GET(req: Request) {
   try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const faculty = searchParams.get('faculty');
     const degreeId = searchParams.get('degreeId');
@@ -31,7 +38,7 @@ export async function GET(req: Request) {
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
       const query = `
-        SELECT s.*, d.code as degree_code, d.name_en as degree_name_en, d.type as degree_type
+        SELECT s.*, d.code as degree_code, d.name_en as degree_name_en, d.type as degree_type, d.faculty as degree_faculty, d.degree_no as degree_number
         FROM students s
         LEFT JOIN degrees d ON s.degree_id = d.id
         ${whereClause}
@@ -50,7 +57,13 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const { studentId, action, rejectReason, adminId = 'ADMIN_EXAM_DIV' } = await req.json();
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { studentId, action, rejectReason } = await req.json();
+    const adminId = session.username;
 
     if (!studentId || !action) {
       return NextResponse.json({ success: false, error: 'Student ID and Action are required.' }, { status: 400 });
@@ -100,13 +113,18 @@ export async function POST(req: Request) {
 
         actionText = `Rejected changes & unlocked profile. Reason: "${reason}".`;
 
-        // Simulate sending email alert
-        console.log(`[MOCK EMAIL SERVICE] 
-          To: ${student.email}
-          Subject: Graduation Profile Rejected & Unlocked
-          Body: Your submitted details for graduation graduation registration were rejected. 
-          Reason: ${reason}
-          Your profile has been unlocked. Please login to the student portal to correct your information and re-confirm attendance.`);
+        // Dispatch correction alert email via Brevo
+        const { origin } = new URL(req.url);
+        const correctionUrl = `${origin}/?email=${encodeURIComponent(student.email)}`;
+        try {
+          await sendEmail({
+            to: [{ email: student.email, name: student.name_with_initials }],
+            subject: 'Correction Required: Graduation Profile Update Alert',
+            htmlContent: getRejectionTemplate(student.name_with_initials, reason, correctionUrl)
+          });
+        } catch (err: any) {
+          console.error(`Failed to send rejection email to ${student.email}:`, err.message);
+        }
       } else {
         throw new Error('Invalid action type. Must be approve or reject.');
       }
